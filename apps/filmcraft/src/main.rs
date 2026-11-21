@@ -357,7 +357,6 @@ fn app_creator(launch: Launch, graphics: graphics::GraphicsStart, created: Arc<A
                 }
                 None => {}
             }
-            }
         } else if !startup_flag && session.prefs.general.at_startup == "emptyProject" {
         } else if demo {
             let _ = session.execute("file.openDemoProject", json!({}));
