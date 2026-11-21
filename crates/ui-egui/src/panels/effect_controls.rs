@@ -232,7 +232,7 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
     // (a 0..1 fraction of the pan range the zoom leaves). Ctrl+wheel zooms; Shift+wheel pans.
     let zoom = app.ui.keyframe_zoom.max(1.0);
     let view_dur = dur / zoom as f64;
-    let off = app.ui.keyframe_zoom_offset.clamp(0.0, 1.0) * (dur - view_dur).max(0.0);
+    let off = f64::from(app.ui.keyframe_zoom_offset.clamp(0.0, 1.0)) * (dur - view_dur).max(0.0);
     let view_start = it.start + Tick((off) as i64);
     let lx = |tk: Tick| -> f32 { lane.min.x + (((tk - view_start).0 as f64 / view_dur) as f32).clamp(0.0, 1.0) * lane.width() };
     // The lane is drawn before this pass over it; capture the wheel here so zooming takes the
@@ -241,20 +241,21 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
         && let Some(pos) = ui.input(|i| i.pointer.interact_pos())
         && lane.contains(pos)
     {
-        let scroll = ui.input(|i| i.raw_scroll_delta);
-        if ui.input(|i| i.modifiers.ctrl) && (scroll.y != 0.0 || scroll.x != 0.0) {
-            let step = if scroll.y + scroll.x > 0.0 { 1.15 } else { 1.0 / 1.15 };
-            let next = (zoom * step).clamp(1.0, 32.0);
-            if next != zoom {
+        let scroll = ui.input(|i| i.smooth_scroll_delta);
+        let sy = f64::from(scroll.y) + f64::from(scroll.x);
+        if ui.input(|i| i.modifiers.ctrl) && sy != 0.0 {
+            let step = if sy > 0.0 { 1.15 } else { 1.0 / 1.15 };
+            let next = (f64::from(zoom) * step).clamp(1.0, 32.0);
+            if next != f64::from(zoom) {
                 let frac = ((pos.x - lane.min.x).max(0.0) / lane.width().max(1.0)) as f64;
                 let under = view_start.0 as f64 + frac * view_dur;
                 let new_span = dur / next;
                 let start = (under - frac * new_span).clamp(it.start.0 as f64, it.start.0 as f64 + dur - new_span);
-                app.ui.keyframe_zoom = next;
+                app.ui.keyframe_zoom = next as f32;
                 app.ui.keyframe_zoom_offset = if dur - new_span > 1.0 { ((start - it.start.0 as f64) / (dur - new_span)) as f32 } else { 0.0 };
             }
-        } else if ui.input(|i| i.modifiers.shift) && zoom > 1.0 && (scroll.y != 0.0 || scroll.x != 0.0) {
-            let d = -(scroll.y + scroll.x) * 0.0015;
+        } else if ui.input(|i| i.modifiers.shift) && zoom > 1.0 && sy != 0.0 {
+            let d = -sy * 0.0015;
             let span = dur - view_dur;
             app.ui.keyframe_zoom_offset = if span > 1.0 {
                 ((app.ui.keyframe_zoom_offset as f64 + (d * dur / span)).clamp(0.0, 1.0)) as f32

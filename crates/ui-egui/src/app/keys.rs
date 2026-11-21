@@ -178,7 +178,7 @@ impl FilmcraftApp {
                         Ok(last)
                     });
                     if let Err(e) = r {
-                        self.ui.status = e;
+                        self.ui.status = e.to_string();
                     }
                     continue;
                 }
