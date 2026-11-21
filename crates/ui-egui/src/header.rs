@@ -13,9 +13,9 @@ use crate::theme::Tokens;
 /// Height of the header bar. With `integrated_titlebar` it sits in the macOS title-bar strip.
 pub const HEIGHT: f32 = 38.0;
 
-/// Draws the header bar in `rect` and handles its clicks: Home, the mode tabs, the workspace name
-/// and its menu (the workspaces, then Reset to Saved Layout, Save Changes to this Workspace, Save as
-/// New Workspace… and Edit Workspaces…), Discord and the quick actions.
+/// Draws the header bar in `rect` and handles its clicks: Home, the mode tabs, the Full screen
+/// button on the right, and the document title centred. (The other quick actions — Discord,
+/// workspaces, Appearance Mode, Quick Export, search and notifications — were removed.)
 pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
     let t = app.tokens;
     let p = ui.painter().clone();
@@ -71,9 +71,9 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
         crate::menus::menu_bar(app, &mut mu);
         left_end = mu.min_rect().max.x;
     }
-    // Document title, centred
+    // Document title, centred between the menu bar (or tabs) and the Full screen button.
     let title = if app.session.is_dirty() { tlf!("{name} - Edited", name = app.session.project.name) } else { app.session.project.name.clone() };
-    // Right cluster: icons at ~38 pt pitch, then workspace name in caps.
+    // Right cluster: only Full screen remains.
     let mut rx = rect.max.x - 14.0;
     let mut btn = |ui: &mut egui::Ui, icon: Icon, id: &str, tip: &str, app: &mut FilmcraftApp| -> egui::Response {
         let r = Rect::from_center_size(pos2(rx - 14.0, rect.center().y), vec2(28.0, 28.0));
@@ -86,121 +86,26 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
         icons::paint(ui.painter(), r.shrink(6.0), icon, if resp.hovered() { t.text } else { t.text_dim });
         resp
     };
-    if btn(ui, Icon::Fullscreen, "fullscreen", tl!("Full screen"), app).clicked() {
+    let fs_btn = btn(ui, Icon::Fullscreen, "fullscreen", tl!("Full screen"), app);
+    if fs_btn.clicked() {
         let fs = ui.ctx().input(|i| i.viewport().fullscreen.unwrap_or(false));
         ui.ctx().send_viewport_cmd(egui::ViewportCommand::Fullscreen(!fs));
     }
-    if btn(ui, Icon::Speaker, "volume", tl!("Volume"), app).clicked() {
-        app.ui.status = tl!("Master volume: use the Audio Track Mixer").into();
-    }
-    if btn(ui, Icon::Search, "search", tl!("Search"), app).clicked() {
-        app.show_panel(crate::dock::PanelKind::Effects);
-    }
-    if btn(ui, Icon::Bell, "notifications", tl!("Progress"), app).clicked() {
-        app.ui.mode = Mode::Export;
-    }
-    // Quick Export: a popup with File Name & Location, a preset list and Export (Premiere 26)
-    let qx = rect.max.x - 14.0 - 4.0 * 38.0; // the fifth button from the right
-    if btn(ui, Icon::Export, "quickExport", tl!("Quick Export"), app).clicked() {
-        app.ui.export.quick_open = !app.ui.export.quick_open;
-        ui.ctx().data_mut(|d| d.insert_temp(egui::Id::unique("quick-export-toggled"), true));
-    }
-    crate::panels::export_mode::quick_export(app, ui.ctx(), pos2(qx - 340.0, rect.max.y + 4.0));
-    // Appearance Mode: click for the next one (Auto, Light, Dark); the icon shows the current one.
-    let (icon, mode) = match app.session.prefs.appearance.appearance_mode.as_str() {
-        "auto" => (Icon::Monitor, tl!("Sync with system")),
-        "light" => (Icon::Sun, tl!("Light")),
-        _ => (Icon::Moon, tl!("Dark")),
-    };
-    let tip = format!("{}: {mode}", tl!("Appearance Mode"));
-    let appearance = btn(ui, icon, "appearance", &tip, app);
-    appearance.context_menu(|ui| crate::panels::settings::appearance_context_menu(app, ui));
-    if appearance.clicked() {
-        crate::panels::settings::cycle_appearance(app, ui.ctx());
-    }
-    let ws_resp = btn(ui, Icon::Workspaces, "workspaces", tl!("Workspaces"), app);
-    // workspace name (caps)
-    let ws = crate::i18n::to_uppercase(crate::i18n::t(&app.ui.workspace));
-    let wg = p.layout_no_wrap(ws.clone(), Tokens::ui(11.0), t.text_dim);
-    let wr = Rect::from_min_size(pos2(rx - wg.size().x + 10.0, rect.center().y - 10.0), vec2(wg.size().x + 8.0, 20.0));
-    let wresp = ui.interact(wr, egui::Id::unique("hdr-ws-name"), Sense::click());
-    app.auto.add("header.workspaceName", wr, &ws);
-    p.galley_with_override_text_color(pos2(wr.min.x + 4.0, rect.center().y - wg.size().y / 2.0), wg, if wresp.hovered() { t.text } else { t.text_dim });
-    // Community: a labelled Discord button, always one click away.
-    {
-        let label = "Discord";
-        let g = p.layout_no_wrap(label.to_string(), Tokens::ui(12.0), Color32::WHITE);
-        let w = g.size().x + 34.0;
-        let r = Rect::from_min_size(pos2(wr.min.x - w - 14.0, rect.center().y - 12.0), vec2(w, 24.0));
-        let resp = ui.interact(r, egui::Id::unique("hdr-discord"), Sense::click()).on_hover_text(tl!("Join the ArtCraft Discord (discord.gg/artcraft)"));
-        app.auto.add("header.discord", r, "Join the ArtCraft Discord");
-        ui.painter().rect_filled(r, 12.0, if resp.hovered() { t.accent_hover } else { t.accent });
-        icons::paint(ui.painter(), Rect::from_center_size(pos2(r.min.x + 14.0, r.center().y), vec2(14.0, 14.0)), Icon::Chat, Color32::WHITE);
-        ui.painter().galley(pos2(r.min.x + 25.0, r.center().y - g.size().y / 2.0), g, Color32::WHITE);
-        // Localized menus and user titles can be wider than English. Use the actual gap.
-        let left = left_end + 12.0;
-        let right = r.min.x - 12.0;
-        if right > left + 40.0 {
-            let mut job = egui::text::LayoutJob::simple_singleline(title, Tokens::ui(14.0), t.tab_text_active);
-            job.wrap.max_width = right - left;
-            job.wrap.max_rows = 1;
-            let galley = p.layout_job(job);
-            let half = galley.size().x / 2.0;
-            let center = if rect.center().x - half >= left && rect.center().x + half <= right { rect.center().x } else { (left + right) / 2.0 };
-            p.with_clip_rect(Rect::from_min_max(pos2(left, rect.min.y), pos2(right, rect.max.y))).galley(
-                pos2(center - half, rect.center().y - galley.size().y / 2.0),
-                galley,
-                t.tab_text_active,
-            );
-        }
-
-        if resp.clicked() {
-            crate::links::open(app, ui.ctx(), crate::links::DISCORD);
-        }
-    }
-    let popup_id = egui::Id::unique("workspaces-popup");
-    if ws_resp.clicked() || wresp.clicked() {
-        ui.ctx().data_mut(|d| d.insert_temp(popup_id, true));
-    }
-    let open = ui.ctx().data(|d| d.get_temp::<bool>(popup_id).unwrap_or(false));
-    if open {
-        let anchor = pos2(wr.min.x, rect.max.y + 4.0);
-        let area = egui::Area::new(popup_id.with("area")).order(egui::Order::Foreground).fixed_pos(anchor).show(ui.ctx(), |ui| {
-            egui::Frame::popup(ui.style()).show(ui, |ui| {
-                ui.with_layout(egui::Layout::top_down_justified(egui::Align::Min), |ui| {
-                    ui.set_min_width(220.0);
-                    for w in crate::dock::names(&app.workspaces) {
-                        let sel = app.ui.workspace == w;
-                        if ui.selectable_label(sel, crate::i18n::t(&w)).clicked() {
-                            app.set_workspace(&w);
-                            ui.ctx().data_mut(|d| d.insert_temp(popup_id, false));
-                        }
-                    }
-                    ui.separator();
-                    // the actions of Window ▸ Workspaces, as in Premiere's workspace menu
-                    let actions = [
-                        ("reset", tl!("Reset to Saved Layout")),
-                        ("saveChanges", tl!("Save Changes to this Workspace")),
-                        ("saveAs", tl!("Save as New Workspace…")),
-                        ("edit", tl!("Edit Workspaces…")),
-                    ];
-                    for (action, label) in actions {
-                        let resp = ui.button(label);
-                        app.auto.add(&format!("header.workspaces.{action}"), resp.rect, label);
-                        if resp.clicked() {
-                            ui.ctx().data_mut(|d| d.insert_temp(popup_id, false));
-                            let ctx = ui.ctx().clone();
-                            if let Err(e) = crate::menus::invoke(app, &ctx, &format!("window.workspace.{action}"), serde_json::json!({})) {
-                                app.ui.status = e;
-                            }
-                        }
-                    }
-                });
-            });
-        });
-        if area.response.clicked_elsewhere() && !(ws_resp.clicked() || wresp.clicked()) {
-            ui.ctx().data_mut(|d| d.insert_temp(popup_id, false));
-        }
+    // Title centred in the space between the mode tabs / menus and the Full screen button.
+    let left = left_end + 12.0;
+    let right = rx - 14.0 + 14.0 - 40.0; // the Full screen button's left edge, minus a gap
+    if right > left + 40.0 {
+        let mut job = egui::text::LayoutJob::simple_singleline(title, Tokens::ui(14.0), t.tab_text_active);
+        job.wrap.max_width = right - left;
+        job.wrap.max_rows = 1;
+        let galley = p.layout_job(job);
+        let half = galley.size().x / 2.0;
+        let center = if rect.center().x - half >= left && rect.center().x + half <= right { rect.center().x } else { (left + right) / 2.0 };
+        p.with_clip_rect(Rect::from_min_max(pos2(left, rect.min.y), pos2(right, rect.max.y))).galley(
+            pos2(center - half, rect.center().y - galley.size().y / 2.0),
+            galley,
+            t.tab_text_active,
+        );
     }
 }
 

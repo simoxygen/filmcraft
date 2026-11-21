@@ -341,6 +341,7 @@ fn app_creator(launch: Launch, graphics: graphics::GraphicsStart, created: Arc<A
         // voice-over recording reads the microphone through cpal
         session.voiceover.input = Some(Box::new(audio_in::CpalIn::new(&session.prefs.audio_hardware.device_class)));
         let (project, media) = args::project_and_media(&files);
+        let no_project = project.is_none();
         if let Some(p) = project {
             if let Err(e) = session.execute("file.open", json!({"path": p})) {
                 log::error!("{e}");
@@ -354,9 +355,8 @@ fn app_creator(launch: Launch, graphics: graphics::GraphicsStart, created: Arc<A
                         log::error!("{e}");
                     }
                 }
-                None => {
-                    let _ = session.execute("file.openDemoProject", json!({}));
-                }
+                None => {}
+            }
             }
         } else if !startup_flag && session.prefs.general.at_startup == "emptyProject" {
         } else if demo {
@@ -373,6 +373,11 @@ fn app_creator(launch: Launch, graphics: graphics::GraphicsStart, created: Arc<A
             }
         }
         let mut app = FilmcraftApp::new(session);
+        // With nothing chosen to open (Settings ▸ General ▸ At Startup ▸ Show Home), start on the
+        // Home screen (Import mode) instead of the project's Edit mode.
+        if no_project && session.prefs.general.at_startup == "showHome" {
+            app.ui.mode = filmcraft_ui_egui::state::Mode::Import;
+        }
         app.set_startup_update_check(true);
         app.graphics_notice = notice;
         if recover == Some(false) {

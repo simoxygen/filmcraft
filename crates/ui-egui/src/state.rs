@@ -513,6 +513,15 @@ pub struct UiState {
     /// Effect Controls: the selected keyframes, highlighted in the keyframe lane (a click selects one).
     #[serde(default)]
     pub keyframe_selection: Vec<KeyframeRef>,
+    /// Effect rows shift-selected in Effect Controls, besides the single selected effect, so
+    /// several effects saved together (Save Preset…) merge into one preset.
+    #[serde(default)]
+    pub selected_effects_extra: Vec<usize>,
+    /// The keyframe lane's time zoom (1 = the whole clip) and its pan (0..1 of the pan range).
+    #[serde(default)]
+    pub keyframe_zoom: f32,
+    #[serde(default)]
+    pub keyframe_zoom_offset: f32,
     /// Essential Sound sub-tab: "Edit" or "Browse".
     #[serde(default)]
     pub essential_sound_tab: String,
@@ -1037,6 +1046,9 @@ impl Default for UiState {
             failed_link: None,
             eyedropper: None,
             keyframe_selection: Vec::new(),
+            selected_effects_extra: Vec::new(),
+            keyframe_zoom: 1.0,
+            keyframe_zoom_offset: 0.0,
             essential_sound_tab: "Edit".into(),
             tts: Default::default(),
             export: Default::default(),

@@ -228,7 +228,41 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
     let lane = Rect::from_min_max(pos2(split + 4.0, rect.min.y + 4.0), pos2(rect.max.x - 6.0, rect.max.y - 26.0));
     ui.painter().rect_filled(lane, 0.0, t.tl_bg);
     let dur = it.duration.0.max(1) as f64;
-    let lx = |tk: Tick| -> f32 { lane.min.x + (((tk - it.start).0 as f64 / dur) as f32).clamp(0.0, 1.0) * lane.width() };
+    // The time view's zoom: `keyframe_zoom` (1 = the whole clip) and `keyframe_zoom_offset`
+    // (a 0..1 fraction of the pan range the zoom leaves). Ctrl+wheel zooms; Shift+wheel pans.
+    let zoom = app.ui.keyframe_zoom.max(1.0);
+    let view_dur = dur / zoom as f64;
+    let off = app.ui.keyframe_zoom_offset.clamp(0.0, 1.0) * (dur - view_dur).max(0.0);
+    let view_start = it.start + Tick((off) as i64);
+    let lx = |tk: Tick| -> f32 { lane.min.x + (((tk - view_start).0 as f64 / view_dur) as f32).clamp(0.0, 1.0) * lane.width() };
+    // The lane is drawn before this pass over it; capture the wheel here so zooming takes the
+    // pointer's tick along (anchored), and Shift+wheel pans when zoomed in.
+    if (ui.input(|i| i.modifiers.ctrl) || ui.input(|i| i.modifiers.shift))
+        && let Some(pos) = ui.input(|i| i.pointer.interact_pos())
+        && lane.contains(pos)
+    {
+        let scroll = ui.input(|i| i.raw_scroll_delta);
+        if ui.input(|i| i.modifiers.ctrl) && (scroll.y != 0.0 || scroll.x != 0.0) {
+            let step = if scroll.y + scroll.x > 0.0 { 1.15 } else { 1.0 / 1.15 };
+            let next = (zoom * step).clamp(1.0, 32.0);
+            if next != zoom {
+                let frac = ((pos.x - lane.min.x).max(0.0) / lane.width().max(1.0)) as f64;
+                let under = view_start.0 as f64 + frac * view_dur;
+                let new_span = dur / next;
+                let start = (under - frac * new_span).clamp(it.start.0 as f64, it.start.0 as f64 + dur - new_span);
+                app.ui.keyframe_zoom = next;
+                app.ui.keyframe_zoom_offset = if dur - new_span > 1.0 { ((start - it.start.0 as f64) / (dur - new_span)) as f32 } else { 0.0 };
+            }
+        } else if ui.input(|i| i.modifiers.shift) && zoom > 1.0 && (scroll.y != 0.0 || scroll.x != 0.0) {
+            let d = -(scroll.y + scroll.x) * 0.0015;
+            let span = dur - view_dur;
+            app.ui.keyframe_zoom_offset = if span > 1.0 {
+                ((app.ui.keyframe_zoom_offset as f64 + (d * dur / span)).clamp(0.0, 1.0)) as f32
+            } else {
+                0.0
+            };
+        }
+    }
     let rate = seq.settings.frame_rate;
     let ruler = Rect::from_min_max(lane.min, pos2(lane.max.x, lane.min.y + RULER_H));
     let bar = Rect::from_min_max(pos2(lane.min.x, ruler.max.y + 4.0), pos2(lane.max.x, ruler.max.y + 4.0 + CLIP_BAR_H));
@@ -284,7 +318,8 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
                 };
                 let key = format!("{}:{}", clip.0, idx);
                 let open = !app.ui.collapsed_fx.contains(&key);
-                let selected = app.session.state.selected_effect.as_ref().is_some_and(|s| s.clip == clip && s.index(&it.effects) == Some(idx));
+                let selected = app.session.state.selected_effect.as_ref().is_some_and(|s| s.clip == clip && s.index(&it.effects) == Some(idx))
+                    || app.ui.selected_effects_extra.contains(&idx);
                 let (r, resp) = bui.allocate_exact_size(vec2(body.width(), ROW_H), Sense::click());
                 if selected {
                     bui.painter().rect_filled(crate::panels::effect_controls::row_fill(r), 0.0, t.row_selected);
@@ -330,7 +365,19 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
                         app.ui.collapsed_fx.retain(|k| *k != key);
                     }
                 } else if resp.clicked() && !fxresp.clicked() && !rresp.clicked() {
-                    actions.push(("effects.select".into(), json!({"clip": clip.0, "effect": idx})));
+                    if bui.input(|i| i.modifiers.shift) {
+                        // Shift+click extends the selection: the clicked effect joins (or leaves)
+                        // it, so several effects can be saved together as one merged preset.
+                        let sel = &mut app.ui.selected_effects_extra;
+                        if let Some(pos) = sel.iter().position(|&i| i == idx) {
+                            sel.remove(pos);
+                        } else {
+                            sel.push(idx);
+                        }
+                    } else {
+                        app.ui.selected_effects_extra.clear();
+                        actions.push(("effects.select".into(), json!({"clip": clip.0, "effect": idx})));
+                    }
                 }
                 let mut save_preset = false;
                 let fx_id = e.effect.clone();
@@ -347,7 +394,12 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
                     }
                 });
                 if save_preset {
-                    crate::panels::presets::open_save(app, clip.0, vec![idx], def.name);
+                    // every shift-selected effect joins the one right-clicked, becoming one preset
+                    let mut idxs = vec![idx];
+                    idxs.extend(app.ui.selected_effects_extra.iter().copied().filter(|&i| i != idx));
+                    idxs.sort_unstable();
+                    let name = if idxs.len() > 1 { "Merged Preset" } else { def.name };
+                    crate::panels::presets::open_save(app, clip.0, idxs, name);
                 }
                 if !open {
                     continue;
@@ -385,7 +437,10 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
     // the ruler and the clip's bar, painted after the rows so rows scrolled up under them (their
     // lines and keyframes) stay hidden
     ui.painter().rect_filled(Rect::from_min_max(lane.min, pos2(lane.max.x, bar.max.y)), 0.0, t.tl_bg);
-    paint_ruler(ui.painter(), ruler, &it, rate, seq.settings.drop_frame, &t);
+    let mut ruler_view = it.clone();
+    ruler_view.start = view_start;
+    ruler_view.duration = Tick(view_dur as i64);
+    paint_ruler(ui.painter(), ruler, &ruler_view, rate, seq.settings.drop_frame, &t);
     ui.painter().rect_filled(bar.shrink2(vec2(0.0, 2.0)), 2.0, t.clip_bar_bg);
     ui.painter().with_clip_rect(bar).text(pos2(bar.min.x + 4.0, bar.center().y), Align2::LEFT_CENTER, &it.name, Tokens::ui(10.0), t.text);
     // click or drag anywhere on the ruler (or the bar) to move the playhead (after the rows, which
@@ -395,7 +450,7 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
         && let Some(pos) = sresp.interact_pointer_pos()
     {
         let f = ((pos.x - lane.min.x) / lane.width()).clamp(0.0, 1.0) as f64;
-        let tk = rate.snap_nearest(it.start + Tick((f * it.duration.0 as f64) as i64));
+        let tk = rate.snap_nearest(view_start + Tick((f * view_dur) as i64));
         app.stop_for_scrub();
         app.session.set_playhead(tk);
     }
@@ -747,18 +802,20 @@ pub(crate) fn param_row(
     // keyframes in the lane: draggable diamonds; right-click for interpolation
     if param.is_animated() {
         let y = r.center().y;
-        let dur = it.duration.0.max(1) as f64;
+        // pixels per tick in the (possibly zoomed) lane view, matching where the diamonds sit
+        let px_per_tick = f64::from(lane.width().max(1.0)) / (it.duration.0.max(1) as f64 / app.ui.keyframe_zoom.max(1.0) as f64);
         for k in &param.keyframes {
             let tl = timeline_time_of(it, k.time);
-            let f = ((tl - it.start).0 as f64 / dur) as f32;
+            let x = lx(tl);
+            let f = (x - lane.min.x) / lane.width().max(1.0);
             if !(-0.01..=1.01).contains(&f) {
                 continue;
             }
             let id = egui::Id::unique(("kf", clip.0, idx, pkey, k.time.0));
-            let original = Rect::from_center_size(pos2(lane.min.x + f * lane.width(), y), vec2(15.0, 15.0));
+            let original = Rect::from_center_size(pos2(x, y), vec2(15.0, 15.0));
             let resp = ui.interact(original.expand(2.0), id, Sense::click_and_drag());
             let reference = KeyframeRef { clip: clip.0, effect: idx, param: pd.id.to_string(), mask, time: k.time };
-            let kr = keys.key(app, ui, reference.clone(), it, *lane, original, &resp, k.interp);
+            let kr = keys.key(app, ui, reference.clone(), it, *lane, original, px_per_tick, &resp, k.interp);
             app.auto.add(&format!("effectControls.{}.{}.keyframe.{}", e.effect, pkey, k.time.0), kr, "keyframe");
             let selected = app.ui.keyframe_selection.contains(&reference);
             let col = if selected { t.hot_text } else { Color32::from_rgb(0xb0, 0xb0, 0xb0) };

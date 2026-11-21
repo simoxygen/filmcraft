@@ -20,14 +20,18 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
     );
     let ctx = ui.ctx().clone();
     let cards = [
-        (tl!("Browse files…"), "file.import", tl!("Movies, audio and stills from disk")),
-        (tl!("Demo footage"), "file.importDemoFootage", tl!("Six procedural 1080p clips with sound")),
-        (tl!("Demo project"), "file.openDemoProject", tl!("A cut sequence with transitions, effects and music")),
-        (tl!("Bars and Tone"), "file.newBarsAndTone", tl!("SMPTE HD bars with 1 kHz reference tone")),
+        (tl!("Browse files…"), "file.import", tl!("Movies, audio and stills from disk"), crate::icons::Icon::Folder),
+        (tl!("Blank project"), "file.newProject", tl!("Start with an empty project"), crate::icons::Icon::Grid),
+        (tl!("Demo footage"), "file.importDemoFootage", tl!("Six procedural 1080p clips with sound"), crate::icons::Icon::Film),
+        (tl!("Demo project"), "file.openDemoProject", tl!("A cut sequence with transitions, effects and music"), crate::icons::Icon::Sequence),
+        (tl!("Bars and Tone"), "file.newBarsAndTone", tl!("SMPTE HD bars with 1 kHz reference tone"), crate::icons::Icon::Grid),
     ];
     let cw = 260.0;
-    for (i, (title, cmd, sub)) in cards.iter().enumerate() {
-        let r = Rect::from_min_size(rect.min + vec2(24.0 + i as f32 * (cw + 16.0), 90.0), vec2(cw, 150.0));
+    for (i, (title, cmd, sub, icon)) in cards.iter().enumerate() {
+        let r = Rect::from_min_size(
+            rect.min + vec2(24.0 + (i % 5) as f32 * (cw + 16.0), 90.0 + (i / 5) as f32 * 166.0),
+            vec2(cw, 150.0),
+        );
         let resp = ui.interact(r, egui::Id::unique(("imp", *cmd)), Sense::click());
         app.auto.add(&format!("import.{cmd}"), r, title);
         ui.painter().rect_filled(r, 8.0, if resp.hovered() { t.hover } else { t.tl_header_bg });
@@ -36,7 +40,7 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
         crate::icons::paint(
             ui.painter(),
             Rect::from_min_size(r.min + vec2(16.0, 18.0), vec2(56.0, 56.0)),
-            [crate::icons::Icon::Folder, crate::icons::Icon::Film, crate::icons::Icon::Sequence, crate::icons::Icon::Grid][i],
+            *icon,
             Color32::from_rgb(140, 150, 255),
         );
         if resp.clicked() {

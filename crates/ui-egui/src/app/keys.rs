@@ -162,6 +162,26 @@ impl FilmcraftApp {
             // timeline clip. A transition shown in the panel is the exception: `edit.clear` removes
             // it, as it does from the Timeline, and Ripple Delete is consumed.
             if self.ui.focused == PanelKind::EffectControls && matches!(id.as_str(), "edit.clear" | "edit.rippleDelete") {
+                // A keyframe selection goes first: Delete removes every selected keyframe (one
+                // undo step), so the shortcut acts on the focused panel.
+                if !self.ui.keyframe_selection.is_empty() {
+                    let keys = self.ui.keyframe_selection.clone();
+                    let r = self.session.edit_group("Delete Keyframes", |s| {
+                        let mut last = serde_json::Value::Null;
+                        for k in &keys {
+                            let mut p = serde_json::json!({"clip": k.clip, "effect": k.effect, "param": k.param, "mediaTime": k.time.0});
+                            if let Some(m) = k.mask {
+                                p["mask"] = serde_json::json!(m);
+                            }
+                            last = s.execute("effects.deleteKeyframe", p)?;
+                        }
+                        Ok(last)
+                    });
+                    if let Err(e) = r {
+                        self.ui.status = e;
+                    }
+                    continue;
+                }
                 // the clips the panel shows: the selected video clip and its linked audio clip, so a
                 // selection on any row the panel displays is removable
                 let shown = crate::panels::effect_controls::selected_clips(self);
